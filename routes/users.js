@@ -51,6 +51,11 @@ module.exports = function (router) {
                 }
             }
 
+            const emailNorm = String(email).trim();
+            if (await User.exists({ email: emailNorm })) {
+                return res.status(400).json({message: "BAD REQUEST: email must be unique to POST user", data: {}});
+            }
+
             const u = await User.create({ 
                 name: String(name).trim(), 
                 email: String(email).trim(), 
