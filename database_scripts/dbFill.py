@@ -39,7 +39,7 @@ def main(argv):
 
     # Server Base URL and port
     baseurl = "localhost"
-    port = 4000
+    port = 3000
 
     # Number of POSTs that will be made to the server
     userCount = 50
