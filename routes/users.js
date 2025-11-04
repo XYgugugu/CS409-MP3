@@ -125,49 +125,50 @@ module.exports = function (router) {
                 return res.status(400).json({ message: "BAD REQUEST: email must be unique to PUT user", data: {} });
             }
 
-            const newPending = Array.isArray(pendingTasks) ? pendingTasks : [];
-            for (const taskId of newPending) {
-                if (!mongoose.isValidObjectId(taskId)) {
+            const newPendingAll = Array.isArray(pendingTasks) ? [...new Set(pendingTasks.map(String))] : [];
+            for (const tid of newPendingAll) {
+                if (!mongoose.isValidObjectId(tid)) {
                     return res.status(400).json({ message: 'BAD REQUEST: invalid task id in input pendingTasks', data: {} });
                 }
-                const t = await Task.findById(taskId).select('completed');
-                if (!t) {
-                    return res.status(404).json({ message: 'NOT FOUND: task in input pendingTasks not found', data: {} });
-                }
-                if (t.completed === true) {
-                    return res.status(400).json({ message: 'BAD REQUEST: completed tasks cannot be in input pendingTasks', data: {} });
+            }
+
+            let tasksInfo = [];
+            if (newPendingAll.length) {
+                tasksInfo = await Task.find({ _id: { $in: newPendingAll } }).select('_id completed').lean();
+                if (tasksInfo.length !== newPendingAll.length) {
+                    return res.status(404).json({ message: 'NOT FOUND: one or more tasks in input pendingTasks not found', data: {} });
                 }
             }
 
-            const oldSet = new Set((prev.pendingTasks || []).map(String));
-            const newSet = new Set(newPending.map(String));
-            const toUnassign = [...oldSet].filter(x => !newSet.has(x));
-            const toAssign = [...newSet].filter(x => !oldSet.has(x));
+            const activeIdSet = new Set(tasksInfo.filter(t => !t.completed).map(t => String(t._id)));
+            const pendingForUser = newPendingAll.filter(id => activeIdSet.has(id));
+            const assignIds = newPendingAll;
 
-            if (toUnassign.length) {
-                await Task.updateMany(
-                    { _id: { $in: toUnassign }, assignedUser: userId },
-                    { $set: { assignedUser: '', assignedUserName: 'unassigned' } }
-                );
-            }
+            await Task.updateMany(
+                { assignedUser: userId },
+                { $set: { assignedUser: '', assignedUserName: 'unassigned' } }
+            );
 
-            if (toAssign.length) {
+            if (assignIds.length) {
                 await User.updateMany(
-                    { _id: { $ne: userId }, pendingTasks: { $in: toAssign } },
-                    { $pull: { pendingTasks: { $in: toAssign } } }
+                    { _id: { $ne: userId }, pendingTasks: { $in: assignIds } },
+                    { $pull: { pendingTasks: { $in: assignIds } } }
                 );
             }
 
-            for (const tid of toAssign) {
-                await Task.updateOne({ _id: tid }, { $set: { assignedUser: userId, assignedUserName: String(name).trim() } });
+            if (assignIds.length) {
+                await Task.updateMany(
+                    { _id: { $in: assignIds } },
+                    { $set: { assignedUser: userId, assignedUserName: String(name).trim() } }
+                );
             }
 
             const u = await User.findOneAndReplace(
                 { _id: userId },
                 {
                     name: String(name).trim(),
-                    email: String(email).trim(),
-                    pendingTasks: [...new Set(newPending.map(String))],
+                    email: emailNorm,
+                    pendingTasks: pendingForUser,
                     dateCreated: prev.dateCreated
                 },
                 { new: true, runValidators: true }
