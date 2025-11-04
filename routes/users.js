@@ -120,7 +120,8 @@ module.exports = function (router) {
                 return res.status(400).json({ message: 'BAD REQUEST: name and email are required to PUT user', data: {} });
             }
 
-            const emailInUse = await User.findOne({ email: email.trim(), _id: { $ne: userId } });
+            const emailNorm = String(email).trim().toLowerCase();
+            const emailInUse = await User.findOne({ email: emailNorm, _id: { $ne: userId } });
             if (emailInUse) {
                 return res.status(400).json({ message: "BAD REQUEST: email must be unique to PUT user", data: {} });
             }
