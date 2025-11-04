@@ -5,7 +5,7 @@ const User = require('../models/user');
 const Task = require('../models/task');
 
 const parseJSON = (v, name) => (v === undefined ? undefined : (() => { try { return JSON.parse(v); } catch { throw new Error(`Invalid JSON in "${name}"`); } })());
-const buildQuery = (q, defaultLimit=0) => ({
+const buildQuery = (q, defaultLimit=100) => ({
   where:  parseJSON(q.where, 'where')  || {},
   sort:   parseJSON(q.sort, 'sort')    || {},
   select: parseJSON(q.select, 'select')|| {},
@@ -13,6 +13,14 @@ const buildQuery = (q, defaultLimit=0) => ({
   limit:  q.limit!==undefined ? parseInt(q.limit,10) : defaultLimit,
   count:  q.count==='true' || q.count===true,
 });
+function parseDeadline(deadline) {
+  const n = Number(String(deadline).trim());
+  if (Number.isFinite(n)) {
+    const ms = Math.abs(n) < 1e12 ? n * 1000 : n;
+    return new Date(ms);
+  }
+  return new Date(deadline);
+}
 
 module.exports = function (router) {
     const tasksRoute = router.route('/tasks');
@@ -28,7 +36,7 @@ module.exports = function (router) {
                 });
             }
 
-            const deadlineDate = new Date(deadline);
+            const deadlineDate = parseDeadline(deadline);
             if (Number.isNaN(deadlineDate.getTime())) {
                 return res.status(400).json({ 
                     message: 'BAD REQUEST: invalid deadline', 
@@ -62,9 +70,6 @@ module.exports = function (router) {
                 }
                 resolvedAssignedUser = assignedUserStr
             }
-            if (completedBool && assignedUserStr !== '') {
-                return res.status(400).json({message: 'BAD REQUEST: completed tasks cannot be assigned to a user', data: {}});
-            }
             const t = await Task.create({
                 name: String(name).trim(),
                 description: typeof description === 'string' ? description : '',
@@ -73,6 +78,12 @@ module.exports = function (router) {
                 assignedUser: resolvedAssignedUser,
                 assignedUserName: resolvedAssignedUserName
             });
+            if (!completedBool && resolvedAssignedUser !== '') {
+                await User.updateOne(
+                    { _id: resolvedAssignedUser },
+                    { $addToSet: { pendingTasks: String(t._id) } }
+                );
+            }
 
             return res.status(201).json({ message: "OK", data: t});
         } catch (e) {
@@ -93,7 +104,7 @@ module.exports = function (router) {
         try {
             let q;
             try {
-                q = buildQuery(req.query, 0);
+                q = buildQuery(req.query, 100);
             } catch {
                 return res.status(400).json({ message: 'BAD REQUEST: invalid query parameters', data: {} });
             }
@@ -129,7 +140,7 @@ module.exports = function (router) {
                 });
             }
 
-            const deadlineDate = new Date(deadline);
+            const deadlineDate = parseDeadline(deadline);
             if (Number.isNaN(deadlineDate.getTime())) {
                 return res.status(400).json({
                     message: 'BAD REQUEST: invalid deadline date',
@@ -163,24 +174,29 @@ module.exports = function (router) {
                 }
                 resolvedAssignedUser = assignedUserStr
             }
-            if (completedBool && assignedUserStr !== '') {
-                return res.status(400).json({message: 'BAD REQUEST: completed tasks cannot be assigned to a user', data: {}});
-            }
 
-            if (completedBool || resolvedAssignedUser === '') {
+            const taskIdStr = String(taskId);
+            if (completedBool) {
                 await User.updateMany(
-                    { pendingTasks: taskId },
-                    { $pull: { pendingTasks: taskId } }
+                    { pendingTasks: taskIdStr },
+                    { $pull: { pendingTasks: taskIdStr } }
                 );
             } else {
-                await User.updateMany(
-                    { _id: { $ne: resolvedAssignedUser }, pendingTasks: taskId },
-                    { $pull: { pendingTasks: taskId } }
-                );
-                await User.updateOne(
-                    { _id: resolvedAssignedUser },
-                    { $addToSet: { pendingTasks: taskId } }
-                );
+                if (resolvedAssignedUser === '') {
+                    await User.updateMany(
+                    { pendingTasks: taskIdStr },
+                    { $pull: { pendingTasks: taskIdStr } }
+                    );
+                } else {
+                    await User.updateMany(
+                        { _id: { $ne: resolvedAssignedUser }, pendingTasks: taskIdStr },
+                        { $pull: { pendingTasks: taskIdStr } }
+                    );
+                    await User.updateOne(
+                        { _id: resolvedAssignedUser },
+                        { $addToSet: { pendingTasks: taskIdStr } }
+                    );
+                }
             }
 
             const t = await Task.findOneAndReplace(
