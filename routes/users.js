@@ -16,6 +16,7 @@ const buildQuery = (q, defaultLimit=0) => ({
 
 module.exports = function (router) {
     const usersRoute = router.route('/users');
+    const usersIdRoute = router.route('/users/:id');
     
     usersRoute.post(async (req, res) => {
         try {
@@ -75,6 +76,88 @@ module.exports = function (router) {
             });
         }
     });
+
+    usersIdRoute.put(async (req, res) => {
+        try {
+            const userId = req.params.id;
+            const { name, email, pendingTasks } = req.body;
+
+            if (!mongoose.isValidObjectId(userId)) {
+                return res.status(400).json({ message: 'BAD REQUEST: invalid user ID', data: {} });
+            }
+
+            const prev = await User.findById(userId);
+            if (!prev) {
+                return res.status(404).json({ message: 'NOT FOUND: user not found', data: {} });
+            }
+
+            if (!name || !email) {
+                return res.status(400).json({ message: 'BAD REQUEST: name and email are required to PUT user', data: {} });
+            }
+
+            const emailInUse = await User.findOne({ email: email.trim(), _id: { $ne: userId } });
+            if (emailInUse) {
+                return res.status(400).json({ message: "BAD REQUEST: email must be unique to PUT user", data: {} });
+            }
+
+            const newPending = Array.isArray(pendingTasks) ? pendingTasks : [];
+            for (const taskId of newPending) {
+                if (!mongoose.isValidObjectId(taskId)) {
+                    return res.status(400).json({ message: 'BAD REQUEST: invalid task id in input pendingTasks', data: {} });
+                }
+                const t = await Task.findById(taskId).select('completed');
+                if (!t) {
+                    return res.status(404).json({ message: 'NOT FOUND: task in input pendingTasks not found', data: {} });
+                }
+                if (t.completed === true) {
+                    return res.status(400).json({ message: 'BAD REQUEST: completed tasks cannot be in input pendingTasks', data: {} });
+                }
+            }
+
+            const oldSet = new Set((prev.pendingTasks || []).map(String));
+            const newSet = new Set(newPending.map(String));
+            const toUnassign = [...oldSet].filter(x => !newSet.has(x));
+            const toAssign = [...newSet].filter(x => !oldSet.has(x));
+
+            if (toUnassign.length) {
+                await Task.updateMany(
+                    { _id: { $in: toUnassign }, assignedUser: userId },
+                    { $set: { assignedUser: '', assignedUserName: 'unassigned' } }
+                );
+            }
+
+            if (toAssign.length) {
+                await User.updateMany(
+                    { _id: { $ne: userId }, pendingTasks: { $in: toAssign } },
+                    { $pull: { pendingTasks: { $in: toAssign } } }
+                );
+            }
+
+            for (const tid of toAssign) {
+                await Task.updateOne({ _id: tid }, { $set: { assignedUser: userId, assignedUserName: String(name).trim() } });
+            }
+
+            const u = await User.findOneAndReplace(
+                { _id: userId },
+                {
+                    name: String(name).trim(),
+                    email: String(email).trim(),
+                    pendingTasks: [...new Set(newPending.map(String))],
+                    dateCreated: prev.dateCreated
+                },
+                { new: true, runValidators: true }
+            );
+
+            return res.status(200).json({ message: 'OK', data: u });
+
+        } catch (e) {
+            if (e.name === 'ValidationError') {
+                return res.status(400).json({ message: 'BAD REQUEST: invalid user payload', data: {} });
+            }
+            return res.status(500).json({ message: 'SERVER ERROR: unable to update user', data: {} });
+        }
+    });
+
 
     return router;
 };
