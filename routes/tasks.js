@@ -89,6 +89,26 @@ module.exports = function (router) {
         }
     });
 
+    tasksRoute.get(async (req, res) => {
+        try {
+            let q;
+            try {
+                q = buildQuery(req.query, 0);
+            } catch {
+                return res.status(400).json({ message: 'BAD REQUEST: invalid query parameters', data: {} });
+            }
+            const { where, sort, select, skip, limit, count } = q;
+            if (count) {
+                const c = await Task.countDocuments(where);
+                return res.status(200).json({ message: 'OK', data: { count: c } });
+            }
+            const docs = await Task.find(where).sort(sort).select(select).skip(skip).limit(limit);
+            return res.status(200).json({ message: 'OK', data: docs });
+        } catch {
+            return res.status(500).json({ message: 'SERVER ERROR: unable to fetch tasks', data: {} });
+        }
+    });
+
     tasksIdRoute.put(async (req, res) => {
         try {
             const taskId = req.params.id;
@@ -208,5 +228,28 @@ module.exports = function (router) {
         }
     });
 
+    router.get('/tasks/:id', async (req, res) => {
+        try {
+            const taskId = req.params.id;
+            if (!mongoose.isValidObjectId(taskId)) {
+                return res.status(400).json({ message: 'BAD REQUEST: invalid task ID', data: {} });
+            }
+            let select = {};
+            if (req.query.select !== undefined) {
+                try {
+                    select = JSON.parse(req.query.select);
+                } catch {
+                    return res.status(400).json({ message: "BAD REQUEST: invalid JSON in 'select'", data: {} });
+                }
+            }
+            const doc = await Task.findById(taskId).select(select);
+            if (!doc) {
+                return res.status(404).json({ message: 'NOT FOUND: task not found', data: {} });
+            }
+            return res.status(200).json({ message: 'OK', data: doc });
+        } catch {
+            return res.status(500).json({ message: 'SERVER ERROR: unable to fetch task', data: {} });
+        }
+    });
     return router;
 };
