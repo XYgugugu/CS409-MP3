@@ -185,5 +185,28 @@ module.exports = function (router) {
             return res.status(500).json({ message: 'SERVER ERROR: unable to update task', data: {} });
         }
     });
+
+    tasksIdRoute.delete(async (req, res) => {
+        try {
+            const taskId = req.params.id;
+            if (!mongoose.isValidObjectId(taskId)) {
+                return res.status(400).json({ message: 'BAD REQUEST: invalid task ID', data: {} });
+            }
+            const exists = await Task.exists({ _id: taskId });
+            if (!exists) {
+                return res.status(404).json({ message: 'NOT FOUND: task not found', data: {} });
+            }
+            const taskIdStr = String(taskId);
+            await User.updateMany(
+                { pendingTasks: taskIdStr },
+                { $pull: { pendingTasks: taskIdStr } }
+            );
+            await Task.deleteOne({ _id: taskId });
+            return res.status(204).end();
+        } catch (e) {
+            return res.status(500).json({ message: 'SERVER ERROR: unable to delete task', data: {} });
+        }
+    });
+
     return router;
 };

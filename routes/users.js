@@ -158,6 +158,28 @@ module.exports = function (router) {
         }
     });
 
+    usersIdRoute.delete(async (req, res) => {
+        try {
+            const userId = req.params.id;
+            if (!mongoose.isValidObjectId(userId)) {
+                return res.status(400).json({ message: 'BAD REQUEST: invalid user ID', data: {} });
+            }
+            const exists = await User.exists({ _id: userId });
+            if (!exists) {
+                return res.status(404).json({ message: 'NOT FOUND: user not found', data: {} });
+            }
+
+            await Task.updateMany(
+                { assignedUser: userId },
+                { $set: { assignedUser: '', assignedUserName: 'unassigned' } }
+            );
+            await User.deleteOne({ _id: userId });
+            
+            return res.status(204).end();
+        } catch (e) {
+            return res.status(500).json({ message: 'SERVER ERROR: unable to delete user', data: {} });
+        }
+    });
 
     return router;
 };
